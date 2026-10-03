@@ -1,6 +1,8 @@
 import { PLAYER_RADIUS } from './game.ts'
 import type { GameState } from './game'
 import { BACKWARD_VISIBLE_ANGLE, FORWARD_VISIBLE_ANGLE, radiusAtDistance, trajectoryAlpha } from './trajectory.ts'
+import { SPRITE_SIZES } from './sprites.ts'
+import type { Sprites } from './sprites.ts'
 
 const METEOR_COLORS = {
   normal: { body: '#f39a5a', crater: '#ad583b' },
@@ -8,9 +10,19 @@ const METEOR_COLORS = {
   swift: { body: '#ffe3a0', crater: '#c19449' },
 } as const
 
-export function createRenderer(canvas: HTMLCanvasElement) {
+export function createRenderer(canvas: HTMLCanvasElement, sprites: Sprites = {}) {
   const context = canvas.getContext('2d')
   if (!context) throw new Error('Canvas 2D를 사용할 수 없습니다.')
+
+  function sprite(image: HTMLImageElement, x: number, y: number, size: number, rotation = 0) {
+    const scale = size / Math.max(image.naturalWidth, image.naturalHeight)
+    const width = image.naturalWidth * scale, height = image.naturalHeight * scale
+    context!.save()
+    context!.translate(x, y)
+    context!.rotate(rotation)
+    context!.drawImage(image, -width / 2, -height / 2, width, height)
+    context!.restore()
+  }
 
   function circle(x: number, y: number, radius: number, fill: string) {
     context!.beginPath()
@@ -76,6 +88,8 @@ export function createRenderer(canvas: HTMLCanvasElement) {
     context.fillRect(0, 0, width, height)
     const scale = Math.min(width / game.viewport.width, height / game.viewport.height)
     context.setTransform(scale, 0, 0, scale, width / 2, height / 2)
+    context.imageSmoothingEnabled = true
+    context.imageSmoothingQuality = 'high'
     renderTrajectory(game)
     circle(0, 0, 5, '#7390a6')
     context.strokeStyle = '#385166'
@@ -84,11 +98,24 @@ export function createRenderer(canvas: HTMLCanvasElement) {
     context.moveTo(0, -15); context.lineTo(0, 15)
     context.stroke()
     for (const meteor of game.meteors) {
+      const image = sprites[meteor.kind]
+      if (image) {
+        // Cosmetic variation from immutable velocity, without consuming gameplay RNG.
+        const seed = Math.sin(meteor.vx * 12.9898 + meteor.vy * 78.233) * 43758.5453
+        const variation = seed - Math.floor(seed)
+        const rotation = variation * Math.PI * 2 + game.elapsed * (0.18 + variation * 0.17)
+        sprite(image, meteor.x, meteor.y, meteor.radius * 2 * SPRITE_SIZES.meteorDiameterScale, rotation)
+        continue
+      }
       const colors = METEOR_COLORS[meteor.kind]
       circle(meteor.x, meteor.y, meteor.radius, colors.body)
       circle(meteor.x - meteor.radius * 0.25, meteor.y - meteor.radius * 0.2, meteor.radius * 0.25, colors.crater)
     }
     for (const heart of game.hearts) {
+      if (sprites.heart) {
+        sprite(sprites.heart, heart.x, heart.y, heart.radius * 2 * SPRITE_SIZES.heartDiameterScale)
+        continue
+      }
       const x = heart.x, y = heart.y, r = heart.radius
       context.beginPath()
       context.moveTo(x, y - r * 0.45)
@@ -106,8 +133,13 @@ export function createRenderer(canvas: HTMLCanvasElement) {
       context.stroke()
     }
     context.globalAlpha = game.invulnerable > 0 && Math.floor(game.invulnerable * 12) % 2 === 0 ? 0.35 : 1
-    circle(x, y, PLAYER_RADIUS, '#65efce')
+    if (sprites.rocket) {
+      // Source points up; the tangent heading needs a further quarter turn.
+      const rotation = game.player.angle + game.player.direction * Math.PI / 2 + Math.PI / 2
+      sprite(sprites.rocket, x, y, PLAYER_RADIUS * 2 * SPRITE_SIZES.rocketDiameterScale, rotation)
+    } else circle(x, y, PLAYER_RADIUS, '#65efce')
     context.globalAlpha = 1
+    if (sprites.rocket) return
     // Keep the direction marker on the real upcoming spiral as well.
     const ahead = 19 / game.player.radius
     const markerAngle = game.player.angle + game.player.direction * ahead

@@ -3,6 +3,7 @@ import { createGame, reverseDirection, updateGame, score } from './game'
 import { bindInput } from './input'
 import { createRenderer } from './render'
 import { logicalViewport } from './viewport'
+import { loadSprites } from './sprites'
 
 document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
   <main aria-label="Reverspin">
@@ -32,7 +33,7 @@ const overlay = document.querySelector<HTMLElement>('#overlay')!
 const pausedElement = document.querySelector<HTMLElement>('#paused')!
 const finalScore = document.querySelector<HTMLElement>('#final-score')!
 const restartButton = document.querySelector<HTMLButtonElement>('#restart')!
-const render = createRenderer(canvas)
+let render: ReturnType<typeof createRenderer>
 const initialSize = canvas.getBoundingClientRect()
 let cssWidth = initialSize.width
 let cssHeight = initialSize.height
@@ -101,4 +102,8 @@ function frame(time: number) {
   updateHud()
   requestAnimationFrame(frame)
 }
-requestAnimationFrame(frame)
+// Wait for every load attempt, including failures, before starting simulation.
+void loadSprites().then(sprites => {
+  render = createRenderer(canvas, sprites)
+  requestAnimationFrame(frame)
+})
