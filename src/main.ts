@@ -5,6 +5,8 @@ import { createRenderer } from './render'
 import { logicalViewport } from './viewport'
 import { loadSprites } from './sprites'
 
+const SPACE_RESTART_GRACE_MS = 800
+
 document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
   <main aria-label="Reverspin">
     <div class="arena">
@@ -17,7 +19,7 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
       <div id="overlay" class="overlay" hidden>
         <div class="panel"><h2>게임 오버</h2>
           <p>최종 점수 <strong id="final-score">0</strong></p>
-          <button id="restart" type="button">다시 시작</button><p class="hint">Space로도 다시 시작</p></div>
+          <button id="restart" type="button">다시 시작</button><p id="restart-hint" class="hint" aria-hidden="true">Space로도 다시 시작</p></div>
       </div>
       <div id="paused" class="overlay pause" hidden>일시 정지</div>
       <p id="controls" class="controls"><kbd>Space</kbd> 방향 반전</p>
@@ -33,6 +35,7 @@ const overlay = document.querySelector<HTMLElement>('#overlay')!
 const pausedElement = document.querySelector<HTMLElement>('#paused')!
 const finalScore = document.querySelector<HTMLElement>('#final-score')!
 const restartButton = document.querySelector<HTMLButtonElement>('#restart')!
+const restartHint = document.querySelector<HTMLElement>('#restart-hint')!
 let render: ReturnType<typeof createRenderer>
 const initialSize = canvas.getBoundingClientRect()
 let cssWidth = initialSize.width
@@ -48,16 +51,24 @@ let previousTime: number | undefined
 let active = !document.hidden && document.hasFocus()
 let lastHud = ''
 let controlsDismissed = false
+let gameOverAt: number | undefined
+let spaceRestartReady = false
 
 function restart() {
   game = createGame(game.viewport)
   previousTime = undefined
   controlsDismissed = false
+  gameOverAt = undefined
+  spaceRestartReady = false
+  restartHint.setAttribute('aria-hidden', 'true')
   restartButton.blur()
 }
 bindInput(() => {
   if (!active) return
-  if (game.phase === 'game-over') restart()
+  if (game.phase === 'game-over') {
+    // Ignored presses are discarded; only a fresh press after UI unlock can restart.
+    if (spaceRestartReady) restart()
+  }
   else {
     reverseDirection(game)
     controlsDismissed = true
@@ -77,7 +88,7 @@ document.addEventListener('visibilitychange', updateActivity)
 function updateHud() {
   const currentScore = score(game)
   const showControls = !controlsDismissed && game.elapsed < 4 && game.phase === 'playing' && active
-  const hud = `${currentScore}/${game.stage}/${game.health}/${game.phase}/${active}/${showControls}`
+  const hud = `${currentScore}/${game.stage}/${game.health}/${game.phase}/${active}/${showControls}/${spaceRestartReady}`
   if (hud === lastHud) return
   lastHud = hud
   scoreElement.textContent = String(currentScore)
@@ -85,6 +96,7 @@ function updateHud() {
   healthElement.textContent = '● '.repeat(game.health) + '○ '.repeat(3 - game.health)
   healthElement.setAttribute('aria-label', `체력 ${game.health} / 3`)
   controls.hidden = !showControls
+  restartHint.setAttribute('aria-hidden', String(!spaceRestartReady))
   const enteringGameOver = game.phase === 'game-over' && overlay.hidden
   overlay.hidden = game.phase !== 'game-over'
   pausedElement.hidden = active || game.phase === 'game-over'
@@ -97,7 +109,13 @@ function frame(time: number) {
   // Discard excess time after a stall rather than jumping ahead on return.
   const delta = previousTime === undefined ? 0 : Math.min((time - previousTime) / 1000, 0.05)
   previousTime = time
+  const wasPlaying = game.phase === 'playing'
   if (active) updateGame(game, delta)
+  const now = performance.now()
+  if (wasPlaying && game.phase === 'game-over') gameOverAt = now
+  // Wall-clock time continues after simulation stops. Input and hint share this
+  // frame-published state so Space cannot restart while its hint is still hidden.
+  spaceRestartReady = gameOverAt !== undefined && now - gameOverAt >= SPACE_RESTART_GRACE_MS
   render(game, cssWidth, cssHeight, window.devicePixelRatio || 1)
   updateHud()
   requestAnimationFrame(frame)

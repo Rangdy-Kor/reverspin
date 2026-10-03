@@ -20,6 +20,7 @@ button { border: 0; border-radius: 4px; padding: 13px 30px; margin-top: 16px; fo
 button:hover { background: #a2ffe6; }
 button:focus-visible { outline: 3px solid white; outline-offset: 4px; }
 .hint, .controls { font-size: 12px; color: #8ba2b6; }
+#restart-hint[aria-hidden="true"] { visibility: hidden; }
 .controls { position: absolute; inset: auto 0 18px; margin: 0; text-align: center; pointer-events: none; }
 .pause { color: #e9f2fa; font-size: 18px; background: #070e1880; }
 kbd { border: 1px solid #385166; border-radius: 3px; padding: 3px 8px; color: #e9f2fa; margin-right: 6px; }
