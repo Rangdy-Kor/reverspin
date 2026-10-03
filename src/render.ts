@@ -1,5 +1,6 @@
-import { ORBIT_RADIUS, PLAYER_RADIUS, WORLD_SIZE } from './game'
+import { PLAYER_RADIUS } from './game.ts'
 import type { GameState } from './game'
+import { BACKWARD_VISIBLE_ANGLE, FORWARD_VISIBLE_ANGLE, radiusAtDistance, trajectoryAlpha } from './trajectory.ts'
 
 const METEOR_COLORS = {
   normal: { body: '#f39a5a', crater: '#ad583b' },
@@ -10,13 +11,6 @@ const METEOR_COLORS = {
 export function createRenderer(canvas: HTMLCanvasElement) {
   const context = canvas.getContext('2d')
   if (!context) throw new Error('Canvas 2D를 사용할 수 없습니다.')
-  let cssSize = canvas.getBoundingClientRect().width
-  let lastDpr = 0
-  let resized = true
-  new ResizeObserver(([entry]) => {
-    if (entry) cssSize = entry.contentRect.width
-    resized = true
-  }).observe(canvas)
 
   function circle(x: number, y: number, radius: number, fill: string) {
     context!.beginPath()
@@ -24,23 +18,65 @@ export function createRenderer(canvas: HTMLCanvasElement) {
     context!.fillStyle = fill
     context!.fill()
   }
-  return (game: GameState) => {
-    const dpr = window.devicePixelRatio || 1
-    if (resized || dpr !== lastDpr) {
-      canvas.width = canvas.height = Math.max(1, Math.round(cssSize * dpr))
-      lastDpr = dpr
-      resized = false
+  function trajectorySegment(x0: number, y0: number, x1: number, y1: number, alpha: number) {
+    context!.globalAlpha = alpha * 0.45
+    context!.beginPath()
+    context!.moveTo(x0, y0)
+    context!.lineTo(x1, y1)
+    context!.stroke()
+  }
+  function renderTrajectory(game: GameState) {
+    const player = game.player
+    context!.strokeStyle = '#63879c'
+    context!.lineWidth = 2
+    // Butt caps avoid overlapping translucent endpoints appearing as dots.
+    context!.lineCap = 'butt'
+    let x = Math.cos(player.angle) * player.radius
+    let y = Math.sin(player.angle) * player.radius
+    // Conditional preview: keep the current direction and Stage target.
+    // Stage entry changes this preview through the shared radius function.
+    const segments = 48
+    for (let i = 1; i <= segments; i++) {
+      const distance = FORWARD_VISIBLE_ANGLE * i / segments
+      const angle = player.angle + player.direction * distance
+      const radius = radiusAtDistance(player, distance)
+      const nextX = Math.cos(angle) * radius, nextY = Math.sin(angle) * radius
+      const midpointDistance = FORWARD_VISIBLE_ANGLE * (i - 0.5) / segments
+      trajectorySegment(x, y, nextX, nextY, trajectoryAlpha(midpointDistance, FORWARD_VISIBLE_ANGLE))
+      x = nextX; y = nextY
     }
-    const scale = canvas.width / WORLD_SIZE
-    context.setTransform(scale, 0, 0, scale, 0, 0)
+    x = Math.cos(player.angle) * player.radius
+    y = Math.sin(player.angle) * player.radius
+    let previousDistance = 0
+    const history = game.trajectoryHistory
+    for (let i = 0; i < history.count; i++) {
+      const index = (history.nextIndex - 1 - i + history.points.length) % history.points.length
+      const point = history.points[index]!
+      const distance = player.distanceTraveled - point.distance
+      if (distance <= previousDistance) continue
+      const endDistance = Math.min(distance, BACKWARD_VISIBLE_ANGLE)
+      const fraction = (endDistance - previousDistance) / (distance - previousDistance)
+      const nextX = x + (point.x - x) * fraction, nextY = y + (point.y - y) * fraction
+      trajectorySegment(x, y, nextX, nextY, trajectoryAlpha((previousDistance + endDistance) / 2, BACKWARD_VISIBLE_ANGLE))
+      x = nextX; y = nextY
+      previousDistance = endDistance
+      if (distance >= BACKWARD_VISIBLE_ANGLE) break
+    }
+    context!.globalAlpha = 1
+  }
+  return (game: GameState, cssWidth: number, cssHeight: number, dpr: number) => {
+    const width = Math.max(1, Math.round(cssWidth * dpr))
+    const height = Math.max(1, Math.round(cssHeight * dpr))
+    if (canvas.width !== width || canvas.height !== height) {
+      canvas.width = width
+      canvas.height = height
+    }
+    context.setTransform(1, 0, 0, 1, 0, 0)
     context.fillStyle = '#0b1422'
-    context.fillRect(0, 0, WORLD_SIZE, WORLD_SIZE)
-    context.translate(WORLD_SIZE / 2, WORLD_SIZE / 2)
-    context.strokeStyle = '#263c50'
-    context.lineWidth = 2
-    context.beginPath()
-    context.arc(0, 0, ORBIT_RADIUS, 0, Math.PI * 2)
-    context.stroke()
+    context.fillRect(0, 0, width, height)
+    const scale = Math.min(width / game.viewport.width, height / game.viewport.height)
+    context.setTransform(scale, 0, 0, scale, width / 2, height / 2)
+    renderTrajectory(game)
     circle(0, 0, 5, '#7390a6')
     context.strokeStyle = '#385166'
     context.beginPath()
@@ -52,8 +88,17 @@ export function createRenderer(canvas: HTMLCanvasElement) {
       circle(meteor.x, meteor.y, meteor.radius, colors.body)
       circle(meteor.x - meteor.radius * 0.25, meteor.y - meteor.radius * 0.2, meteor.radius * 0.25, colors.crater)
     }
-    const x = Math.cos(game.player.angle) * ORBIT_RADIUS
-    const y = Math.sin(game.player.angle) * ORBIT_RADIUS
+    for (const heart of game.hearts) {
+      const x = heart.x, y = heart.y, r = heart.radius
+      context.beginPath()
+      context.moveTo(x, y - r * 0.45)
+      context.bezierCurveTo(x - r, y - r * 1.4, x - r * 1.5, y, x, y + r)
+      context.bezierCurveTo(x + r * 1.5, y, x + r, y - r * 1.4, x, y - r * 0.45)
+      context.fillStyle = '#ff739b'
+      context.fill()
+    }
+    const x = Math.cos(game.player.angle) * game.player.radius
+    const y = Math.sin(game.player.angle) * game.player.radius
     if (game.invulnerable > 0) {
       context.strokeStyle = '#b7fff1'
       context.beginPath()
@@ -63,8 +108,10 @@ export function createRenderer(canvas: HTMLCanvasElement) {
     context.globalAlpha = game.invulnerable > 0 && Math.floor(game.invulnerable * 12) % 2 === 0 ? 0.35 : 1
     circle(x, y, PLAYER_RADIUS, '#65efce')
     context.globalAlpha = 1
-    // A tangent marker exposes the direction immediately after a reversal.
-    const tangent = game.player.angle + game.player.direction * Math.PI / 2
-    circle(x + Math.cos(tangent) * 19, y + Math.sin(tangent) * 19, 3, '#d7fff5')
+    // Keep the direction marker on the real upcoming spiral as well.
+    const ahead = 19 / game.player.radius
+    const markerAngle = game.player.angle + game.player.direction * ahead
+    const markerRadius = radiusAtDistance(game.player, ahead)
+    circle(Math.cos(markerAngle) * markerRadius, Math.sin(markerAngle) * markerRadius, 3, '#d7fff5')
   }
 }

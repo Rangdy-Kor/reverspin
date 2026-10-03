@@ -2,6 +2,7 @@ import './style.css'
 import { createGame, reverseDirection, updateGame, score } from './game'
 import { bindInput } from './input'
 import { createRenderer } from './render'
+import { logicalViewport } from './viewport'
 
 document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
   <main aria-label="Reverspin">
@@ -9,6 +10,7 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
       <canvas aria-label="중앙을 공전하는 플레이어와 운석 회피 게임"></canvas>
       <section class="hud" aria-label="게임 상태">
         <div><span>점수</span><strong id="score">0</strong></div>
+        <div><span>STAGE</span><strong id="stage">1</strong></div>
         <div><span>체력</span><strong id="health">● ● ●</strong></div>
       </section>
       <div id="overlay" class="overlay" hidden>
@@ -23,6 +25,7 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
 
 const canvas = document.querySelector<HTMLCanvasElement>('canvas')!
 const scoreElement = document.querySelector<HTMLElement>('#score')!
+const stageElement = document.querySelector<HTMLElement>('#stage')!
 const healthElement = document.querySelector<HTMLElement>('#health')!
 const controls = document.querySelector<HTMLElement>('#controls')!
 const overlay = document.querySelector<HTMLElement>('#overlay')!
@@ -30,14 +33,23 @@ const pausedElement = document.querySelector<HTMLElement>('#paused')!
 const finalScore = document.querySelector<HTMLElement>('#final-score')!
 const restartButton = document.querySelector<HTMLButtonElement>('#restart')!
 const render = createRenderer(canvas)
-let game = createGame()
+const initialSize = canvas.getBoundingClientRect()
+let cssWidth = initialSize.width
+let cssHeight = initialSize.height
+let game = createGame(logicalViewport(cssWidth, cssHeight))
+new ResizeObserver(([entry]) => {
+  if (!entry || entry.contentRect.width <= 0 || entry.contentRect.height <= 0) return
+  cssWidth = entry.contentRect.width
+  cssHeight = entry.contentRect.height
+  game.viewport = logicalViewport(cssWidth, cssHeight)
+}).observe(canvas)
 let previousTime: number | undefined
 let active = !document.hidden && document.hasFocus()
 let lastHud = ''
 let controlsDismissed = false
 
 function restart() {
-  game = createGame()
+  game = createGame(game.viewport)
   previousTime = undefined
   controlsDismissed = false
   restartButton.blur()
@@ -64,18 +76,20 @@ document.addEventListener('visibilitychange', updateActivity)
 function updateHud() {
   const currentScore = score(game)
   const showControls = !controlsDismissed && game.elapsed < 4 && game.phase === 'playing' && active
-  const hud = `${currentScore}/${game.health}/${game.phase}/${active}/${showControls}`
+  const hud = `${currentScore}/${game.stage}/${game.health}/${game.phase}/${active}/${showControls}`
   if (hud === lastHud) return
   lastHud = hud
   scoreElement.textContent = String(currentScore)
+  stageElement.textContent = String(game.stage)
   healthElement.textContent = '● '.repeat(game.health) + '○ '.repeat(3 - game.health)
   healthElement.setAttribute('aria-label', `체력 ${game.health} / 3`)
   controls.hidden = !showControls
+  const enteringGameOver = game.phase === 'game-over' && overlay.hidden
   overlay.hidden = game.phase !== 'game-over'
   pausedElement.hidden = active || game.phase === 'game-over'
   if (game.phase === 'game-over') {
     finalScore.textContent = String(currentScore)
-    restartButton.focus({ preventScroll: true })
+    if (enteringGameOver && active) restartButton.focus({ preventScroll: true })
   }
 }
 function frame(time: number) {
@@ -83,7 +97,7 @@ function frame(time: number) {
   const delta = previousTime === undefined ? 0 : Math.min((time - previousTime) / 1000, 0.05)
   previousTime = time
   if (active) updateGame(game, delta)
-  render(game)
+  render(game, cssWidth, cssHeight, window.devicePixelRatio || 1)
   updateHud()
   requestAnimationFrame(frame)
 }
