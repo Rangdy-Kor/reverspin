@@ -34,25 +34,31 @@ export function stageForScore(points: number): number {
 
 export function difficultyProgression(stage: number): number {
   if (!Number.isInteger(stage) || stage < 1) throw new RangeError('Stage must be a positive integer.')
-  // Zero-based Stage preserves the initial balance. Peak slope is at Stage 11
-  // (~100 seconds); a small linear tail prevents a mathematical difficulty cap.
-  const progress = stage - 1
-  return 0.002 * progress + 1.65 * (Math.tanh((progress - 10) / 5) - Math.tanh(-10 / 5))
+  // Subtract each Stage 1 baseline: D(1) is exactly zero. The positive linear
+  // tail keeps progression unbounded after the three sigmoid rises settle.
+  return 0.0014 * (stage - 1)
+    + 0.18 * (sigmoid((stage - 9) / 2.5) - sigmoid((1 - 9) / 2.5))
+    + 0.88 * (sigmoid((stage - 19) / 4) - sigmoid((1 - 19) / 4))
+    + 0.58 * (sigmoid((stage - 38) / 12) - sigmoid((1 - 38) / 12))
+}
+
+function sigmoid(value: number): number {
+  return 1 / (1 + Math.exp(-value))
 }
 
 export function stageDifficulty(stage: number): Readonly<StageDifficulty> {
   const growth = difficultyProgression(stage)
-  const variety = growth / (growth + 3)
+  const variety = Math.tanh(0.232 * growth ** 1.887)
   return {
     progression: growth,
-    orbitRadius: 180 / (1 + growth) ** 0.45,
-    angularVelocity: 3.4 + 1.1 * growth,
-    meteorBaseSpeed: 150 + 28 * growth,
-    meteorSpawnRate: 0.55 + 0.65 * growth,
+    orbitRadius: 180 / (1 + 7.3 * growth ** 1.82) ** 0.256,
+    angularVelocity: 3.4 + 2.38 * growth ** 0.875,
+    meteorBaseSpeed: 150 + 107.3 * growth ** 0.837,
+    meteorSpawnRate: 0.55 + 0.415 * growth ** 1.241,
     normalWeight: 0.8 - 0.25 * variety,
     heavyWeight: 0.15 + 0.1 * variety,
     swiftWeight: 0.05 + 0.15 * variety,
-    meteorTargetRadius: 360 / (1 + 0.6 * growth),
+    meteorTargetRadius: 600 / (1 + 3.49 * growth ** 1.395) ** 0.710,
   }
 }
 

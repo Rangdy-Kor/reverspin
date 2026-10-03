@@ -65,9 +65,10 @@ test('all difficulty changes remain monotonic without clamps', () => {
       assert.ok(second[key] > first[key], `${key} increases at ${stage}`)
     }
     assert.ok(Math.abs(first.normalWeight + first.heavyWeight + first.swiftWeight - 1) < 1e-12)
-    assert.ok(first.normalWeight > 0.55)
-    assert.ok(second.heavyWeight > first.heavyWeight)
-    assert.ok(second.swiftWeight > first.swiftWeight)
+    assert.ok(first.normalWeight >= 0.55)
+    // The bounded type mixture may round to its asymptote at extreme Stages.
+    assert.ok(second.heavyWeight >= first.heavyWeight)
+    assert.ok(second.swiftWeight >= first.swiftWeight)
   }
   assert.ok(stageDifficulty(1000000).meteorBaseSpeed > stageDifficulty(1000).meteorBaseSpeed)
   assert.throws(() => stageDifficulty(1.5), RangeError)
