@@ -17,6 +17,7 @@ export type MeteorKind = keyof typeof METEOR_TYPES
 const TAU = Math.PI * 2
 
 export interface StageDifficulty {
+  progression: number
   orbitRadius: number
   angularVelocity: number
   meteorBaseSpeed: number
@@ -24,25 +25,42 @@ export interface StageDifficulty {
   normalWeight: number
   heavyWeight: number
   swiftWeight: number
+  meteorTargetRadius: number
 }
 
 export function stageForScore(points: number): number {
   return Math.floor(points / 100) + 1
 }
 
-export function stageDifficulty(stage: number): Readonly<StageDifficulty> {
+export function difficultyProgression(stage: number): number {
   if (!Number.isInteger(stage) || stage < 1) throw new RangeError('Stage must be a positive integer.')
-  const growth = Math.log(stage)
-  const variety = 1 - stage ** -0.35
+  // Zero-based Stage preserves the initial balance. Peak slope is at Stage 11
+  // (~100 seconds); a small linear tail prevents a mathematical difficulty cap.
+  const progress = stage - 1
+  return 0.002 * progress + 1.65 * (Math.tanh((progress - 10) / 5) - Math.tanh(-10 / 5))
+}
+
+export function stageDifficulty(stage: number): Readonly<StageDifficulty> {
+  const growth = difficultyProgression(stage)
+  const variety = growth / (growth + 3)
   return {
-    orbitRadius: 180 * stage ** -0.22,
+    progression: growth,
+    orbitRadius: 180 / (1 + growth) ** 0.45,
     angularVelocity: 3.4 + 1.1 * growth,
-    meteorBaseSpeed: 150 + 32 * growth,
-    meteorSpawnRate: 0.55 + 0.7 * growth,
+    meteorBaseSpeed: 150 + 28 * growth,
+    meteorSpawnRate: 0.55 + 0.65 * growth,
     normalWeight: 0.8 - 0.25 * variety,
     heavyWeight: 0.15 + 0.1 * variety,
     swiftWeight: 0.05 + 0.15 * variety,
+    meteorTargetRadius: 360 / (1 + 0.6 * growth),
   }
+}
+
+export function sampleMeteorTarget(difficulty: Readonly<StageDifficulty>, random: () => number): { x: number; y: number } {
+  const angle = random() * TAU
+  // sqrt(U) samples equal areas, rather than overpopulating the center.
+  const radius = difficulty.meteorTargetRadius * Math.sqrt(random())
+  return { x: Math.cos(angle) * radius, y: Math.sin(angle) * radius }
 }
 
 interface MovingCircle {
@@ -92,7 +110,7 @@ export function reverseDirection(game: GameState) {
   if (game.phase === 'playing') game.player.direction = game.player.direction === 1 ? -1 : 1
 }
 
-function inwardPath(game: GameState, radius: number, speed: number, spread: number, random: () => number): MovingCircle {
+function inwardPath(game: GameState, radius: number, speed: number, spread: number | undefined, random: () => number): MovingCircle {
   const angle = random() * TAU
   const cos = Math.cos(angle), sin = Math.sin(angle)
   // Intersect a ray with the expanded viewport rectangle, keeping the whole
@@ -102,8 +120,16 @@ function inwardPath(game: GameState, radius: number, speed: number, spread: numb
     (game.viewport.height / 2 + radius + 16) / Math.abs(sin),
   )
   const x = cos * distance, y = sin * distance
-  const offset = (random() * 2 - 1) * game.difficulty.orbitRadius * spread
-  const dx = -sin * offset - x, dy = cos * offset - y
+  let targetX: number, targetY: number
+  if (spread === undefined) {
+    const target = sampleMeteorTarget(game.difficulty, random)
+    targetX = target.x; targetY = target.y
+  } else {
+    // Preserve Heart's existing perpendicular target line and RNG consumption.
+    const offset = (random() * 2 - 1) * game.difficulty.orbitRadius * spread
+    targetX = -sin * offset; targetY = cos * offset
+  }
+  const dx = targetX - x, dy = targetY - y
   const length = Math.hypot(dx, dy)
   return { x, y, vx: dx / length * speed, vy: dy / length * speed, radius }
 }
@@ -114,7 +140,7 @@ function spawnMeteor(game: GameState, random: () => number) {
     : roll < game.difficulty.normalWeight + game.difficulty.heavyWeight ? 'heavy' : 'swift'
   const settings = METEOR_TYPES[kind]
   const speed = game.difficulty.meteorBaseSpeed * settings.speedMultiplier * (0.9 + random() * 0.2)
-  game.meteors.push({ kind, ...inwardPath(game, settings.radius, speed, 1.4, random) })
+  game.meteors.push({ kind, ...inwardPath(game, settings.radius, speed, undefined, random) })
 }
 
 function escaped(object: MovingCircle, viewport: Readonly<Viewport>): boolean {

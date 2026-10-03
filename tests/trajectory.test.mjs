@@ -19,7 +19,7 @@ test('Stage radius change starts from the actual old orbit without teleporting',
   const before = game.player.radius
   advance(game, 0.3)
   assert.ok(game.player.radius < before && game.player.radius > game.difficulty.orbitRadius)
-  advance(game, 0.6)
+  advance(game, 0.7)
   assert.equal(game.player.radius, game.difficulty.orbitRadius)
   assert.equal(game.player.transition.traveledAngle, TRANSITION_ANGLE)
 })

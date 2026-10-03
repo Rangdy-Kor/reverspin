@@ -57,14 +57,12 @@ test('difficulty is cached within a Stage and changes at the score boundary', ()
   updateGame(game, 0.05)
   assert.equal(game.difficulty, secondDifficulty)
 })
-test('all difficulty changes are monotonic with diminishing increments and no clamps', () => {
+test('all difficulty changes remain monotonic without clamps', () => {
   for (const stage of [1, 2, 3, 5, 10, 20, 100, 1000, 1000000]) {
-    const first = stageDifficulty(stage), second = stageDifficulty(stage + 1), third = stageDifficulty(stage + 2)
+    const first = stageDifficulty(stage), second = stageDifficulty(stage + 1)
     assert.ok(second.orbitRadius < first.orbitRadius)
-    assert.ok(first.orbitRadius - second.orbitRadius > second.orbitRadius - third.orbitRadius)
     for (const key of ['angularVelocity', 'meteorBaseSpeed', 'meteorSpawnRate']) {
       assert.ok(second[key] > first[key], `${key} increases at ${stage}`)
-      assert.ok(second[key] - first[key] > third[key] - second[key], `${key} increments diminish at ${stage}`)
     }
     assert.ok(Math.abs(first.normalWeight + first.heavyWeight + first.swiftWeight - 1) < 1e-12)
     assert.ok(first.normalWeight > 0.55)
@@ -89,7 +87,8 @@ test('fractional spawn accumulation matches Stage rate including rates above sub
   advance(game, 1)
   assert.equal(game.meteors.length, Math.floor(game.difficulty.meteorSpawnRate))
   assert.ok(Math.abs(game.spawnProgress - (game.difficulty.meteorSpawnRate % 1)) < 1e-10)
-  const extreme = atStage(1e100)
+  // Exercise multiple spawns without trying to allocate astronomical linear-tail rates.
+  const extreme = atStage(1000000)
   extreme.spawnProgress = 0
   updateGame(extreme, 0.001)
   assert.equal(extreme.meteors.length, Math.floor(extreme.difficulty.meteorSpawnRate * 0.001))
@@ -179,7 +178,7 @@ test('Stage probabilities drive type selection and distinct sizes and speeds', (
     for (let i = 0; i < 1000; i++) {
       const game = atStage(stage)
       game.spawnProgress = 1
-      updateGame(game, 0.001, valuesRandom([(i + 0.5) / 1000, 0.5, 0.25, 0.5]))
+      updateGame(game, 0.001, valuesRandom([(i + 0.5) / 1000, 0.5, 0.25, 0.5, 0.5]))
       const meteor = game.meteors[0], settings = METEOR_TYPES[meteor.kind]
       counts[meteor.kind]++
       assert.equal(meteor.radius, settings.radius)
@@ -201,7 +200,7 @@ test('meteor velocity is fixed at spawn and only new meteors use the new Stage s
   const game = createGame()
   game.elapsed = 9.99
   game.spawnProgress = 1
-  updateGame(game, 0.001, valuesRandom([0.1, 0.5, 0.25, 0.5]))
+  updateGame(game, 0.001, valuesRandom([0.1, 0.5, 0.25, 0.5, 0.5]))
   const old = game.meteors[0]
   const vx = old.vx, vy = old.vy
   assert.ok(Math.abs(Math.hypot(vx, vy) - stageDifficulty(1).meteorBaseSpeed) < 1e-10)
@@ -210,7 +209,7 @@ test('meteor velocity is fixed at spawn and only new meteors use the new Stage s
   assert.equal(old.vx, vx)
   assert.equal(old.vy, vy)
   game.spawnProgress = 1
-  updateGame(game, 0.001, valuesRandom([0.1, 0.5, 0.25, 0.5]))
+  updateGame(game, 0.001, valuesRandom([0.1, 0.5, 0.25, 0.5, 0.5]))
   const fresh = game.meteors[1]
   assert.ok(Math.abs(Math.hypot(fresh.vx, fresh.vy) - stageDifficulty(2).meteorBaseSpeed) < 1e-10)
   assert.ok(Math.hypot(fresh.vx, fresh.vy) > Math.hypot(old.vx, old.vy))
@@ -221,36 +220,31 @@ test('individual meteor speed jitter still spans minus and plus ten percent', ()
   for (const variation of [0, 0.5, 0.999999]) {
     const game = createGame()
     game.spawnProgress = 1
-    updateGame(game, 0.001, valuesRandom([0.1, variation, 0.25, 0.5]))
+    updateGame(game, 0.001, valuesRandom([0.1, variation, 0.25, 0.5, 0.5]))
     const meteor = game.meteors[0]
     assert.ok(Math.abs(Math.hypot(meteor.vx, meteor.vy) - 150 * (0.9 + variation * 0.2)) < 1e-10)
   }
 })
-test('meteor paths cross and miss without tracking the player; Heart paths are tighter', () => {
-  let crossing = 0
+test('meteor paths do not track the player; Heart retains its original target line', () => {
   for (let i = 0; i < 500; i++) {
     const first = createGame(), second = createGame()
     first.spawnProgress = second.spawnProgress = 1
     second.player.angle = 1.2
-    const values = [0.1, 0.5, i / 500, (i + 0.5) / 500]
+    const values = [0.1, 0.5, i / 500, (i + 0.5) / 500, 0.5]
     updateGame(first, 0.001, valuesRandom(values))
     updateGame(second, 0.001, valuesRandom(values))
     assert.deepEqual(first.meteors, second.meteors)
-    const meteor = first.meteors[0]
-    if (closestApproach(meteor) <= first.difficulty.orbitRadius) crossing++
     const heartGame = createGame()
     heartGame.health = 2
     heartGame.heartSpawnRemaining = 0
     updateGame(heartGame, 0.001, valuesRandom([i / 500, (i + 0.5) / 500, 0.5]))
     const heart = heartGame.hearts[0]
     assert.ok(closestApproach(heart) <= heartGame.difficulty.orbitRadius * 0.45)
-    assert.ok(closestApproach(heart) < closestApproach(meteor))
     const vx = heart.vx, vy = heart.vy
     updateGame(heartGame, 0.05)
     assert.equal(heart.vx, vx)
     assert.equal(heart.vy, vy)
   }
-  assert.ok(crossing > 350 && crossing < 390)
 })
 test('Heart spawns only below full HP and its eligible-time rule and speed are Stage independent', () => {
   const full = createGame()
@@ -298,7 +292,7 @@ test('objects spawn fully offscreen on varying aspect ratios and use outgoing de
     for (let i = 0; i < 16; i++) {
       const game = createGame(viewport)
       game.spawnProgress = 1
-      updateGame(game, 0.001, valuesRandom([0.1, 0.5, i / 16, 0.6]))
+      updateGame(game, 0.001, valuesRandom([0.1, 0.5, i / 16, 0.6, 0.5]))
       const meteor = game.meteors[0]
       assert.ok(Math.abs(meteor.x) - meteor.radius > viewport.width / 2 || Math.abs(meteor.y) - meteor.radius > viewport.height / 2)
     }
